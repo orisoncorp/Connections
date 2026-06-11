@@ -1,6 +1,7 @@
 import React from 'react'
 import { edges, EDGE_COLORS, EDGE_DASH, type EdgeType } from '../data/connections'
 import { EDGE_NUM } from './edgeNumbers'
+import { type VisibleTypes } from '../App'
 
 const TYPE_LABELS: Record<EdgeType, string> = {
   valor: 'VALOR',
@@ -33,9 +34,12 @@ const DEPT_COLORS: Record<string, string> = {
 
 const EDGE_TYPES: EdgeType[] = ['valor', 'bloqueante', 'retroalimentacao', 'informacional']
 
-export function IndexPanel() {
-  const divider = <div style={{ borderTop: '1px solid #1e1e20', margin: '4px 0' }} />
+interface Props {
+  visibleTypes: VisibleTypes
+  onToggle: (type: EdgeType) => void
+}
 
+export function IndexPanel({ visibleTypes, onToggle }: Props) {
   return (
     <div style={{
       position: 'absolute',
@@ -61,17 +65,39 @@ export function IndexPanel() {
         {EDGE_TYPES.map((t) => {
           const dash = EDGE_DASH[t]
           const color = EDGE_COLORS[t]
+          const visible = visibleTypes[t]
           return (
             <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <svg width={28} height={10} style={{ flexShrink: 0 }}>
                 <line x1={0} y1={5} x2={28} y2={5}
                   stroke={color} strokeWidth={1.5}
                   strokeDasharray={dash ?? undefined}
-                  opacity={0.8} />
+                  opacity={visible ? 0.8 : 0.22} />
               </svg>
-              <span style={{ fontSize: 7, color: '#d4d2cd', letterSpacing: 0.3 }}>
+              <span style={{ fontSize: 7, color: visible ? '#d4d2cd' : '#444', letterSpacing: 0.3, flex: 1 }}>
                 {TYPE_LABELS[t]}
               </span>
+              <button
+                onClick={() => onToggle(t)}
+                title={visible ? 'Ocultar' : 'Revelar'}
+                style={{
+                  background: 'none',
+                  border: `1px solid ${visible ? color : '#333'}`,
+                  borderRadius: 2,
+                  padding: '2px 5px',
+                  cursor: 'pointer',
+                  color: visible ? color : '#444',
+                  fontSize: 6,
+                  letterSpacing: 0.5,
+                  fontFamily: 'Montserrat, sans-serif',
+                  flexShrink: 0,
+                  lineHeight: 1.4,
+                  opacity: 0.85,
+                  transition: 'border-color 0.15s, color 0.15s',
+                }}
+              >
+                {visible ? 'ON' : 'OFF'}
+              </button>
             </div>
           )
         })}

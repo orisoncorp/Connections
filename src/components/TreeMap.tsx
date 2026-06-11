@@ -11,6 +11,7 @@ import {
 } from '../data/connections'
 import { useCanvas, type NodePositions } from './useCanvas'
 import { EDGE_NUM } from './edgeNumbers'
+import { type VisibleTypes } from '../App'
 
 // ─── Geometria inicial ────────────────────────────────────────────────────────
 // Canvas de referência para a geometria canônica (independente do viewport)
@@ -381,12 +382,22 @@ function ZoomControls({ onZoomIn, onZoomOut, onFit }: {
 
 // ─── TreeMap principal ────────────────────────────────────────────────────────
 
-export function TreeMap() {
-  const substratoEdges = edges.filter((e) => e.from === 'substrato' || e.to === 'substrato')
-  const loopEdges      = edges.filter((e) => e.type === 'retroalimentacao')
-  const normalEdges    = edges.filter(
+interface TreeMapProps {
+  visibleTypes: VisibleTypes
+  onResetVisibility: () => void
+}
+
+export function TreeMap({ visibleTypes, onResetVisibility }: TreeMapProps) {
+  const allSubstrato = edges.filter((e) => e.from === 'substrato' || e.to === 'substrato')
+  const allLoops     = edges.filter((e) => e.type === 'retroalimentacao')
+  const allNormal    = edges.filter(
     (e) => e.type !== 'retroalimentacao' && e.from !== 'substrato' && e.to !== 'substrato'
   )
+
+  // Filtra por visibilidade — substrato segue a visibilidade do seu tipo
+  const substratoEdges = allSubstrato.filter((e) => visibleTypes[e.type])
+  const loopEdges      = allLoops.filter((e) => visibleTypes[e.type])
+  const normalEdges    = allNormal.filter((e) => visibleTypes[e.type])
 
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -409,6 +420,7 @@ export function TreeMap() {
     if (!el) return
     const { width, height } = el.getBoundingClientRect()
     fitView(width, height, 80)
+    onResetVisibility()
   }
 
   const isDragging = useRef(false)
