@@ -58,4 +58,13 @@ body,
   overflow: hidden;
   display: flex;
   align-items: stretch;
+  position: relative;
+}
+
+.app-canvas-inner {
+  /* Ocupa o espaço à direita do painel lateral (260px) */
+  margin-left: 260px;
+  flex: 1;
+  display: flex;
+  overflow: hidden;
 }

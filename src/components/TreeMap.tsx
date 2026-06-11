@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useRef } from 'react'
 import {
   nodes,
   edges,
@@ -8,39 +8,33 @@ import {
   EDGE_WIDTH,
   type Node,
   type Edge,
-  type EdgeType,
 } from '../data/connections'
+import { useCanvas, type NodePositions } from './useCanvas'
+import { EDGE_NUM } from './edgeNumbers'
 
-// ─── Viewport ─────────────────────────────────────────────────────────────────
-const W = 1440
-const H = 1020
+// ─── Geometria inicial ────────────────────────────────────────────────────────
+// Canvas de referência para a geometria canônica (independente do viewport)
+const CANVAS_W = 1100
+const CANVAS_H = 1020
 
-// Geometria canônica — pilar central 700, direito 930, esquerdo 470, aux 130
-// Mais espaço vertical no fundo para arcos de loop e sub-items de Malkhut
-const NODE_POS: Record<string, { x: number; y: number }> = {
-  keter:    { x: 700, y: 100  },
-  daat:     { x: 700, y: 255  },
-  tiferet:  { x: 700, y: 490  },
-  yesod:    { x: 700, y: 700  },
-  malkhut:  { x: 700, y: 900  },
-  hokhmah:  { x: 930, y: 185  },
-  hesed:    { x: 930, y: 405  },
-  netzach:  { x: 930, y: 625  },
-  binah:    { x: 470, y: 185  },
-  gevurah:  { x: 470, y: 405  },
-  hod:      { x: 470, y: 625  },
-  substrato:{ x: 130, y: 490  },
+const INITIAL_POSITIONS: NodePositions = {
+  keter:    { x: 550, y: 100 },
+  daat:     { x: 550, y: 265 },
+  tiferet:  { x: 550, y: 480 },
+  yesod:    { x: 550, y: 700 },
+  malkhut:  { x: 550, y: 900 },
+  hokhmah:  { x: 780, y: 185 },
+  hesed:    { x: 780, y: 400 },
+  netzach:  { x: 780, y: 620 },
+  binah:    { x: 320, y: 185 },
+  gevurah:  { x: 320, y: 400 },
+  hod:      { x: 320, y: 620 },
+  substrato:{ x: 90,  y: 480 },
 }
-
-function pos(id: string) { return NODE_POS[id] ?? { x: 0, y: 0 } }
 
 const NODE_R = 36
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function nodeById(id: string): Node {
-  return nodes.find((n) => n.id === id)!
-}
+// ─── Helpers de geometria ─────────────────────────────────────────────────────
 
 function borderPt(
   fx: number, fy: number,
@@ -52,7 +46,6 @@ function borderPt(
   return [fx + dx / d * r, fy + dy / d * r]
 }
 
-// Ponto ao longo de bezier quadrática em t
 function qBez(
   ax: number, ay: number,
   cx: number, cy: number,
@@ -66,68 +59,48 @@ function qBez(
   ]
 }
 
-// Perpendicular normalizado de (ax,ay)→(bx,by): aponta "para a esquerda" do vetor
 function perpLeft(ax: number, ay: number, bx: number, by: number): [number, number] {
   const dx = bx - ax, dy = by - ay
   const d = Math.sqrt(dx * dx + dy * dy) || 1
   return [-dy / d, dx / d]
 }
 
-// ─── Configuração especial por aresta ────────────────────────────────────────
-// Permite fixar o lado do chip manualmente para evitar colisões conhecidas
+// ─── Roteamento de arestas ────────────────────────────────────────────────────
 
-const CHIP_SIDE_OVERRIDE: Record<string, 1 | -1> = {
-  e01: -1,  // keter→tiferet: chip à esquerda
-  e02: 1,   // keter→netzach: chip à direita
-  e03: -1,  // keter→binah: chip à esquerda
-  e04: 1,   // keter→hokhmah: chip à direita
-  e05: -1,  // binah→tiferet: chip à esquerda
-  e06: 1,   // tiferet→hesed: chip à direita
-  e07: 1,   // hesed→netzach: chip à direita
-  e08: 1,   // hokhmah→daat: chip à direita
-  e09: -1,  // gevurah→yesod: chip à esquerda
-  e10: -1,  // tiferet→malkhut: chip à esquerda
-  e11: -1,  // daat→malkhut: chip à esquerda
-  e15: -1,  // hod→gevurah: chip à esquerda
-  e16: -1,  // binah→netzach: chip à esquerda
-  e22: 1,   // yesod→daat: chip à direita
+// Loops: todos arqueiam à direita
+const LOOP_OFFSETS = [170, 270, 380, 220, 490]
+
+// Posição t ao longo da linha para o chip de número
+const CHIP_T: Record<string, number> = {
+  e01: 0.28, e10: 0.72, e11: 0.35,
 }
 
-// t ao longo da linha para posicionar o chip (0=origem, 1=destino)
-const CHIP_T_OVERRIDE: Record<string, number> = {
-  e01: 0.28,  // keter→tiferet: acima do daat
-  e10: 0.72,  // tiferet→malkhut: abaixo de yesod
-  e11: 0.35,  // daat→malkhut: no terço superior
-  e09: 0.5,
-  e22: 0.5,
+// Offset perpendicular: lado relativo ao vetor da aresta
+const CHIP_SIDE: Record<string, 1 | -1> = {
+  e01: -1, e02: 1,  e03: -1, e04: 1,
+  e05: -1, e06: 1,  e07: 1,  e08: 1,
+  e09: -1, e10: -1, e11: -1, e15: -1,
+  e16: -1, e22: 1,
 }
 
-// Para segmentos quase-verticais, perpLeft retorna ~[-1,0] então o chip vai só 20px
-// Esses overrides forçam offset manual em [dx,dy] absoluto
-const CHIP_ABSOLUTE_OFFSET: Record<string, [number, number]> = {
-  e01: [-140, -18], // keter→tiferet: longe do daat (deslocado acima-esquerda)
-  e10: [-85, 0],  // tiferet→malkhut
-  e11: [-75, 0],  // daat→malkhut
-  e09: [-75, 0],  // gevurah→yesod
-  e22: [75, 0],   // yesod→daat
+// Overrides para segmentos verticais (perpLeft ≈ [-1,0] não afasta o suficiente)
+const CHIP_ABS: Record<string, [number, number]> = {
+  e01: [-120, -14],
+  e09: [-65, 0],
+  e10: [-75, 0],
+  e11: [-70, 0],
+  e22: [70, 0],
 }
-
-// ─── Builder de caminho ────────────────────────────────────────────────────────
 
 interface PathResult {
   d: string
-  chipX: number
-  chipY: number
+  numX: number
+  numY: number
 }
 
-// Loops: todos por fora à direita, raios escalonados por índice
-// Ordem em loopEdges: e17(malkhut→hesed), e18(malkhut→netzach), e19(malkhut→gevurah), e20(gevurah→tiferet), e21(malkhut→daat)
-const LOOP_OFFSETS = [170, 270, 380, 220, 490]
-
-function buildPath(edge: Edge, loopIdx: number): PathResult {
-  const fp = pos(edge.from)
-  const tp = pos(edge.to)
-
+function buildPath(edge: Edge, positions: NodePositions, loopIdx: number): PathResult {
+  const fp = positions[edge.from] ?? { x: 0, y: 0 }
+  const tp = positions[edge.to]   ?? { x: 0, y: 0 }
   const isLoop = edge.type === 'retroalimentacao'
   const isSubstrato = edge.from === 'substrato' || edge.to === 'substrato'
 
@@ -135,144 +108,147 @@ function buildPath(edge: Edge, loopIdx: number): PathResult {
     const offset = LOOP_OFFSETS[loopIdx % LOOP_OFFSETS.length]
     const [fx, fy] = borderPt(fp.x, fp.y, tp.x, tp.y, NODE_R)
     const [tx, ty] = borderPt(tp.x, tp.y, fp.x, fp.y, NODE_R)
-    // Ponto de controle sempre à direita (x+offset do midpoint)
     const mx = (fx + tx) / 2 + offset
     const my = (fy + ty) / 2
-    // Chip no ponto do arco mais à direita (t=0.5), deslocado +20px para além do arco
     const [lx, ly] = qBez(fx, fy, mx, my, tx, ty, 0.5)
-    // Escalonar chipY por loopIdx para chips de loops próximos não se sobreporem
     const chipYOff = (loopIdx % 3) * 14 - 14
     return {
       d: `M ${fx} ${fy} Q ${mx} ${my} ${tx} ${ty}`,
-      chipX: lx + 22,
-      chipY: ly + chipYOff,
+      numX: lx + 20,
+      numY: ly + chipYOff,
     }
   }
 
   const [fx, fy] = borderPt(fp.x, fp.y, tp.x, tp.y, NODE_R)
   const [tx, ty] = borderPt(tp.x, tp.y, fp.x, fp.y, NODE_R)
-
-  // Posição t ao longo da linha para o chip
-  const t = CHIP_T_OVERRIDE[edge.id] ?? 0.5
+  const t = CHIP_T[edge.id] ?? 0.5
   const lx = fx + (tx - fx) * t
   const ly = fy + (ty - fy) * t
 
-  // Absolute offset override para segmentos quase-verticais
-  const absOff = CHIP_ABSOLUTE_OFFSET[edge.id]
-  if (absOff) {
-    return {
-      d: `M ${fx} ${fy} L ${tx} ${ty}`,
-      chipX: lx + absOff[0],
-      chipY: ly + absOff[1],
-    }
+  const abs = CHIP_ABS[edge.id]
+  if (abs) {
+    return { d: `M ${fx} ${fy} L ${tx} ${ty}`, numX: lx + abs[0], numY: ly + abs[1] }
   }
 
-  // Offset perpendicular — 20px, lado configurável
   const [px, py] = perpLeft(fx, fy, tx, ty)
-  const side = CHIP_SIDE_OVERRIDE[edge.id] ?? 1
-
+  const side = CHIP_SIDE[edge.id] ?? 1
   return {
     d: `M ${fx} ${fy} L ${tx} ${ty}`,
-    chipX: lx + px * 20 * side,
-    chipY: ly + py * 20 * side,
+    numX: lx + px * 18 * side,
+    numY: ly + py * 18 * side,
   }
 }
 
-// ─── EdgePath ─────────────────────────────────────────────────────────────────
+// ─── Componentes SVG ──────────────────────────────────────────────────────────
 
-interface EdgePathProps {
-  edge: Edge
-  loopIdx?: number
-}
-
-function EdgePath({ edge, loopIdx = 0 }: EdgePathProps) {
-  const color = EDGE_COLORS[edge.type]
-  const dash = EDGE_DASH[edge.type]
-  const isSubstrato = edge.from === 'substrato' || edge.to === 'substrato'
-  const opacity = isSubstrato ? 0.2 : 0.62
-  const width = isSubstrato ? 0.75 : (edge.label ? EDGE_WIDTH[edge.type] : 1)
-  const { d } = buildPath(edge, loopIdx)
-  const arrowId = `arr-${edge.id}`
+function EdgeLayer({ positions, loopEdges, normalEdges, substratoEdges }: {
+  positions: NodePositions
+  loopEdges: Edge[]
+  normalEdges: Edge[]
+  substratoEdges: Edge[]
+}) {
+  const renderEdge = (edge: Edge, loopIdx = 0) => {
+    const color = EDGE_COLORS[edge.type]
+    const dash = EDGE_DASH[edge.type]
+    const isSubstrato = edge.from === 'substrato' || edge.to === 'substrato'
+    const opacity = isSubstrato ? 0.22 : 0.60
+    const width = isSubstrato ? 0.75 : (edge.label ? EDGE_WIDTH[edge.type] : 0.9)
+    const { d } = buildPath(edge, positions, loopIdx)
+    const arrowId = `arr-${edge.id}`
+    return (
+      <g key={edge.id}>
+        <defs>
+          <marker id={arrowId} markerWidth="7" markerHeight="7" refX="5" refY="2.5" orient="auto">
+            <path d="M0,0 L0,5 L7,2.5 z" fill={color} opacity={isSubstrato ? 0.25 : 0.65} />
+          </marker>
+        </defs>
+        <path d={d} fill="none" stroke={color} strokeWidth={width}
+          strokeDasharray={dash} strokeOpacity={opacity}
+          markerEnd={`url(#${arrowId})`} />
+      </g>
+    )
+  }
 
   return (
     <g>
-      <defs>
-        <marker id={arrowId} markerWidth="7" markerHeight="7" refX="5" refY="2.5" orient="auto">
-          <path d="M0,0 L0,5 L7,2.5 z" fill={color} opacity={isSubstrato ? 0.25 : 0.7} />
-        </marker>
-      </defs>
-      <path
-        d={d} fill="none"
-        stroke={color} strokeWidth={width}
-        strokeDasharray={dash} strokeOpacity={opacity}
-        markerEnd={`url(#${arrowId})`}
-      />
+      {substratoEdges.map((e) => renderEdge(e))}
+      {normalEdges.map((e) => renderEdge(e))}
+      {loopEdges.map((e, i) => renderEdge(e, i))}
     </g>
   )
 }
 
-// ─── Chip de rótulo ───────────────────────────────────────────────────────────
-
-function estimateW(text: string) { return text.length * 5.3 + 16 }
-
-function EdgeChip({ edge, loopIdx = 0 }: EdgePathProps) {
-  if (!edge.label) return null
-  const isSubstrato = edge.from === 'substrato' || edge.to === 'substrato'
-  if (isSubstrato) return null
-
-  const { chipX, chipY } = buildPath(edge, loopIdx)
-  const color = EDGE_COLORS[edge.type]
-  const cw = estimateW(edge.label)
-  const ch = 15
+function NumChipLayer({ positions, loopEdges, normalEdges }: {
+  positions: NodePositions
+  loopEdges: Edge[]
+  normalEdges: Edge[]
+}) {
+  const renderChip = (edge: Edge, loopIdx = 0) => {
+    const num = EDGE_NUM[edge.id]
+    if (!num) return null
+    const color = EDGE_COLORS[edge.type]
+    const { numX, numY } = buildPath(edge, positions, loopIdx)
+    const R = 8
+    return (
+      <g key={`num-${edge.id}`}>
+        <circle cx={numX} cy={numY} r={R} fill="#111113" stroke={color}
+          strokeWidth={1} strokeOpacity={0.6} />
+        <text x={numX} y={numY} textAnchor="middle" dominantBaseline="middle"
+          fill={color} fontSize={7} fontFamily="Montserrat, sans-serif"
+          fontWeight={600} opacity={0.9}>
+          {num}
+        </text>
+      </g>
+    )
+  }
 
   return (
     <g>
-      <rect
-        x={chipX - cw / 2} y={chipY - ch / 2}
-        width={cw} height={ch}
-        fill="#111113" fillOpacity={0.96}
-        stroke={color} strokeWidth={0.4} strokeOpacity={0.35}
-        rx={1}
-      />
-      <text
-        x={chipX} y={chipY}
-        textAnchor="middle" dominantBaseline="middle"
-        fill="#d4d2cd"
-        fontSize={8.5}
-        fontFamily="Montserrat, sans-serif"
-        fontWeight={400}
-        letterSpacing={0.2}
-      >
-        {edge.label}
-      </text>
+      {normalEdges.map((e) => renderChip(e))}
+      {loopEdges.map((e, i) => renderChip(e, i))}
     </g>
   )
 }
 
-// ─── NodeCircle ───────────────────────────────────────────────────────────────
+function NodeLayer({ positions, onMouseDown }: {
+  positions: NodePositions
+  onMouseDown: (e: React.MouseEvent<SVGSVGElement>) => void
+}) {
+  return (
+    <g>
+      {nodes.map((node) => (
+        <NodeCircle key={node.id} node={node} positions={positions} />
+      ))}
+    </g>
+  )
+}
 
-function NodeCircle({ node }: { node: Node }) {
-  const p = pos(node.id)
+function NodeCircle({ node, positions }: { node: Node; positions: NodePositions }) {
+  const p = positions[node.id] ?? { x: 0, y: 0 }
   const color = DEPT_COLORS[node.department]
   const isHidden = node.hidden
   const isAux = node.department === 'auxiliar'
-
   const nameColor = node.department === 'projetos' ? '#1a1a1c' : '#edeae4'
   const sephColor = node.department === 'projetos' ? '#555' : '#bcbab5'
 
+  // Da'at — liminar mas presente (22% fill, borda tracejada legível)
   if (isHidden) {
     return (
-      <g>
-        <circle cx={p.x} cy={p.y} r={NODE_R} fill={color} fillOpacity={0.04}
-          stroke={color} strokeWidth={1.5} strokeDasharray="6,4" strokeOpacity={0.3} />
+      <g style={{ cursor: 'grab' }}>
+        <circle cx={p.x} cy={p.y} r={NODE_R}
+          fill={color} fillOpacity={0.22}
+          stroke={color} strokeWidth={1.5}
+          strokeDasharray="6,4" strokeOpacity={0.55} />
+        {/* Nome acima */}
         <text x={p.x} y={p.y - NODE_R - 8} textAnchor="middle"
-          fill="#e8e6e1" fontSize={10} fontFamily="Cormorant Garamond, serif"
-          fontWeight={300} opacity={0.28}>
+          fill="#e8e6e1" fontSize={10.5}
+          fontFamily="Cormorant Garamond, serif" fontWeight={300} opacity={0.65}>
           {node.label}
         </text>
+        {/* Sephirah dentro */}
         <text x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle"
-          fill="#e8e6e1" fontSize={6} fontFamily="Montserrat, sans-serif"
-          letterSpacing={2} opacity={0.22} style={{ textTransform: 'uppercase' }}>
+          fill="#e8e6e1" fontSize={6.5} fontFamily="Montserrat, sans-serif"
+          letterSpacing={2} opacity={0.45} style={{ textTransform: 'uppercase' }}>
           {node.sephirah}
         </text>
       </g>
@@ -282,13 +258,13 @@ function NodeCircle({ node }: { node: Node }) {
   if (isAux) {
     const bw = 100, bh = 52
     return (
-      <g>
+      <g style={{ cursor: 'grab' }}>
         <rect x={p.x - bw / 2} y={p.y - bh / 2} width={bw} height={bh}
-          fill={color} fillOpacity={0.06}
-          stroke={color} strokeWidth={0.75} strokeOpacity={0.22} rx={2} />
+          fill={color} fillOpacity={0.07}
+          stroke={color} strokeWidth={0.75} strokeOpacity={0.25} rx={2} />
         <text x={p.x} y={p.y - 10} textAnchor="middle"
           fill="#e8e6e1" fontSize={9} fontFamily="Cormorant Garamond, serif"
-          fontWeight={300} opacity={0.45}>
+          fontWeight={300} opacity={0.48}>
           {node.label}
         </text>
         {node.subItems?.map((s, i) => (
@@ -302,55 +278,41 @@ function NodeCircle({ node }: { node: Node }) {
     )
   }
 
-  // Quebra o nome em linhas de máx ~18 chars
+  // Nome sempre acima: quebrar em linhas de máx 18 chars
   const words = node.label.split(' ')
   const lines: string[] = []
   let cur = ''
   for (const w of words) {
-    const candidate = cur ? `${cur} ${w}` : w
-    if (candidate.length > 18 && cur) {
-      lines.push(cur)
-      cur = w
-    } else {
-      cur = candidate
-    }
+    const cand = cur ? `${cur} ${w}` : w
+    if (cand.length > 18 && cur) { lines.push(cur); cur = w }
+    else cur = cand
   }
   if (cur) lines.push(cur)
 
   const lineH = 13
   const blockH = lines.length * lineH
-  // tiferet e yesod ficam espremidos no pilar central — nome vai abaixo para evitar
-  // colisão com daat (acima de tiferet) e tiferet (acima de yesod)
-  const nameBelow = node.id === 'tiferet' || node.id === 'yesod'
-  const nameBlockTop = nameBelow
-    ? p.y + NODE_R + 10
-    : p.y - NODE_R - 8 - blockH
+  // Bloco sempre acima do círculo; gap = 8px
+  const nameBlockTop = p.y - NODE_R - 8 - blockH
 
   return (
-    <g>
-      <circle cx={p.x} cy={p.y} r={NODE_R + 10} fill={color} opacity={0.035} />
+    <g style={{ cursor: 'grab' }}>
+      <circle cx={p.x} cy={p.y} r={NODE_R + 10} fill={color} opacity={0.032} />
       <circle cx={p.x} cy={p.y} r={NODE_R}
         fill={color} fillOpacity={node.department === 'projetos' ? 0.82 : 0.16}
         stroke={color} strokeWidth={1} strokeOpacity={0.62} />
 
-      {/* Nome do nó — acima ou abaixo conforme nameBelow */}
+      {/* Nome acima — sempre */}
       {lines.map((line, i) => (
-        <text
-          key={i}
-          x={p.x}
-          y={nameBlockTop + i * lineH + lineH * 0.85}
+        <text key={i}
+          x={p.x} y={nameBlockTop + i * lineH + lineH * 0.85}
           textAnchor="middle"
-          fill={nameColor}
-          fontSize={10.5}
-          fontFamily="Cormorant Garamond, serif"
-          fontWeight={300}
-          letterSpacing={0.3}
-        >
+          fill={nameColor} fontSize={10.5}
+          fontFamily="Cormorant Garamond, serif" fontWeight={300} letterSpacing={0.3}>
           {line}
         </text>
       ))}
 
-      {/* Sephirah dentro do círculo */}
+      {/* Sephirah dentro */}
       {node.sephirah && (
         <text x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle"
           fill={sephColor} fontSize={6.5} fontFamily="Montserrat, sans-serif"
@@ -360,14 +322,9 @@ function NodeCircle({ node }: { node: Node }) {
         </text>
       )}
 
-      {/* Sub-items: quando nome está abaixo, sub-items ficam após o bloco de nome */}
+      {/* Sub-items abaixo do círculo */}
       {node.subItems && (
-        <text
-          x={p.x}
-          y={nameBelow
-            ? nameBlockTop + blockH + lineH * 0.85 + 4
-            : p.y + NODE_R + 13}
-          textAnchor="middle"
+        <text x={p.x} y={p.y + NODE_R + 13} textAnchor="middle"
           fill={sephColor} fontSize={6.5} fontFamily="Montserrat, sans-serif"
           letterSpacing={0.8} opacity={0.72}>
           {node.subItems.join(' · ')}
@@ -377,109 +334,75 @@ function NodeCircle({ node }: { node: Node }) {
   )
 }
 
-// ─── Legenda ──────────────────────────────────────────────────────────────────
-
-const EDGE_LABELS: Record<EdgeType, string> = {
-  valor: 'Valor',
-  bloqueante: 'Bloqueante',
-  retroalimentacao: 'Retroalimentação',
-  informacional: 'Informacional',
-}
-
-function Legend() {
-  const types: EdgeType[] = ['valor', 'bloqueante', 'retroalimentacao', 'informacional']
-  const depts = [
-    { color: '#8B1A1A', label: 'Tático' },
-    { color: '#8B4A1A', label: 'Aquisição' },
-    { color: '#1A5C2E', label: 'Controladoria' },
-    { color: '#e8e6e1', label: 'Projetos' },
-  ]
-  const x0 = 24, y0 = 720, w = 196
-  const totalH = 16 + types.length * 19 + 14 + depts.length * 17 + 18
-
-  return (
-    <g transform={`translate(${x0},${y0})`}>
-      <rect x={0} y={0} width={w} height={totalH}
-        fill="#0d0d0f" fillOpacity={0.94} stroke="#2e2e2e" strokeWidth={1} />
-      <text x={12} y={12} fill="#484848" fontSize={6}
-        fontFamily="Montserrat, sans-serif" letterSpacing={3}>LEGENDA</text>
-
-      {types.map((t, i) => {
-        const y = 26 + i * 19
-        return (
-          <g key={t}>
-            <line x1={12} y1={y} x2={46} y2={y}
-              stroke={EDGE_COLORS[t]} strokeWidth={1.5}
-              strokeDasharray={EDGE_DASH[t]} opacity={0.8} />
-            <text x={54} y={y + 1} fill="#d4d2cd" fontSize={7.5}
-              fontFamily="Montserrat, sans-serif" dominantBaseline="middle">
-              {EDGE_LABELS[t]}
-            </text>
-          </g>
-        )
-      })}
-
-      <line x1={12} y1={26 + types.length * 19 + 4} x2={w - 12} y2={26 + types.length * 19 + 4}
-        stroke="#2e2e2e" strokeWidth={1} />
-
-      {depts.map((d, i) => {
-        const y = 26 + types.length * 19 + 16 + i * 17
-        return (
-          <g key={d.label}>
-            <circle cx={18} cy={y} r={5} fill={d.color} fillOpacity={0.75} />
-            <text x={30} y={y + 1} fill="#bcbab5" fontSize={7.5}
-              fontFamily="Montserrat, sans-serif" dominantBaseline="middle">
-              {d.label}
-            </text>
-          </g>
-        )
-      })}
-
-      <text x={12} y={totalH - 7} fill="#3a3a3a" fontSize={6}
-        fontFamily="Montserrat, sans-serif">
-        rótulo = peso · sem rótulo = óbvia
-      </text>
-    </g>
-  )
-}
-
-// ─── Rótulos de pilar ─────────────────────────────────────────────────────────
-
-function PillarLabels() {
+function PillarLabels({ positions }: { positions: NodePositions }) {
+  // Âncoras fixas baseadas nas posições canônicas (não se movem com drag individual)
+  const cx = positions['keter']?.x ?? 550
   return (
     <g>
-      <text x={700} y={32} textAnchor="middle" fill="#e8e6e1" fontSize={7}
-        fontFamily="Montserrat, sans-serif" letterSpacing={4} opacity={0.15}>
+      <text x={cx} y={30} textAnchor="middle" fill="#e8e6e1" fontSize={7}
+        fontFamily="Montserrat, sans-serif" letterSpacing={4} opacity={0.14}>
         ESTRATÉGICO
       </text>
-      <text x={700} y={990} textAnchor="middle" fill="#e8e6e1" fontSize={7}
-        fontFamily="Montserrat, sans-serif" letterSpacing={4} opacity={0.15}>
+      <text x={cx} y={CANVAS_H - 20} textAnchor="middle" fill="#e8e6e1" fontSize={7}
+        fontFamily="Montserrat, sans-serif" letterSpacing={4} opacity={0.14}>
         MANIFESTAÇÃO
       </text>
-      <text x={470} y={54} textAnchor="middle" fill="#1A5C2E" fontSize={6.5}
-        fontFamily="Montserrat, sans-serif" letterSpacing={3} opacity={0.45}>
-        SEVERIDADE
-      </text>
-      <text x={700} y={54} textAnchor="middle" fill="#e8e6e1" fontSize={6.5}
-        fontFamily="Montserrat, sans-serif" letterSpacing={3} opacity={0.28}>
-        EQUILÍBRIO
-      </text>
-      <text x={930} y={54} textAnchor="middle" fill="#8B4A1A" fontSize={6.5}
-        fontFamily="Montserrat, sans-serif" letterSpacing={3} opacity={0.45}>
-        MISERICÓRDIA
-      </text>
-      {/* Linhas de pilar */}
-      <line x1={700} y1={62} x2={700} y2={920} stroke="#2e2e2e" strokeWidth={1}
-        strokeDasharray="2,7" opacity={0.18} />
-      <line x1={470} y1={165} x2={470} y2={660} stroke="#1A5C2E" strokeWidth={1}
-        strokeDasharray="2,8" opacity={0.09} />
-      <line x1={930} y1={165} x2={930} y2={660} stroke="#8B4A1A" strokeWidth={1}
-        strokeDasharray="2,8" opacity={0.09} />
+      <text x={positions['binah']?.x ?? 320} y={54} textAnchor="middle"
+        fill="#1A5C2E" fontSize={6.5} fontFamily="Montserrat, sans-serif"
+        letterSpacing={3} opacity={0.4}>SEVERIDADE</text>
+      <text x={cx} y={54} textAnchor="middle"
+        fill="#e8e6e1" fontSize={6.5} fontFamily="Montserrat, sans-serif"
+        letterSpacing={3} opacity={0.25}>EQUILÍBRIO</text>
+      <text x={positions['hokhmah']?.x ?? 780} y={54} textAnchor="middle"
+        fill="#8B4A1A" fontSize={6.5} fontFamily="Montserrat, sans-serif"
+        letterSpacing={3} opacity={0.4}>MISERICÓRDIA</text>
+      {/* Linhas de pilar — fixas nas posições iniciais para não mover com drag */}
+      <line x1={cx} y1={62} x2={cx} y2={920}
+        stroke="#2e2e2e" strokeWidth={1} strokeDasharray="2,7" opacity={0.16} />
+      <line x1={positions['binah']?.x ?? 320} y1={165}
+            x2={positions['hod']?.x ?? 320}   y2={660}
+        stroke="#1A5C2E" strokeWidth={1} strokeDasharray="2,8" opacity={0.08} />
+      <line x1={positions['hokhmah']?.x ?? 780} y1={165}
+            x2={positions['netzach']?.x ?? 780} y2={660}
+        stroke="#8B4A1A" strokeWidth={1} strokeDasharray="2,8" opacity={0.08} />
     </g>
   )
 }
 
-// ─── TreeMap ──────────────────────────────────────────────────────────────────
+// ─── Controles de zoom (HTML, fora do SVG) ────────────────────────────────────
+
+function ZoomControls({ onZoomIn, onZoomOut, onFit }: {
+  onZoomIn: () => void
+  onZoomOut: () => void
+  onFit: () => void
+}) {
+  const btn: React.CSSProperties = {
+    width: 28, height: 28,
+    background: '#0d0d0f',
+    border: '1px solid #2e2e2e',
+    color: '#bcbab5',
+    fontSize: 14,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    cursor: 'pointer',
+    fontFamily: 'Montserrat, sans-serif',
+    userSelect: 'none',
+    flexShrink: 0,
+    transition: 'background 0.15s',
+  }
+  return (
+    <div style={{
+      position: 'absolute', bottom: 20, right: 20,
+      display: 'flex', flexDirection: 'column', gap: 2,
+      zIndex: 10,
+    }}>
+      <button style={btn} onClick={onZoomIn} title="Zoom in">+</button>
+      <button style={btn} onClick={onZoomOut} title="Zoom out">−</button>
+      <button style={{ ...btn, fontSize: 9, letterSpacing: 0.5 }} onClick={onFit} title="Fit view">FIT</button>
+    </div>
+  )
+}
+
+// ─── TreeMap principal ────────────────────────────────────────────────────────
 
 export function TreeMap() {
   const substratoEdges = edges.filter((e) => e.from === 'substrato' || e.to === 'substrato')
@@ -488,42 +411,74 @@ export function TreeMap() {
     (e) => e.type !== 'retroalimentacao' && e.from !== 'substrato' && e.to !== 'substrato'
   )
 
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const { svgRef, transform, positions, onMouseDown, fitView, zoomIn, zoomOut } = useCanvas({
+    initialTransform: { x: 0, y: 0, k: 1 },
+    initialPositions: INITIAL_POSITIONS,
+    nodeRadius: NODE_R,
+  })
+
+  // Fit ao montar
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const { width, height } = el.getBoundingClientRect()
+    fitView(width, height, 80)
+  }, [fitView])
+
+  const handleFit = () => {
+    const el = containerRef.current
+    if (!el) return
+    const { width, height } = el.getBoundingClientRect()
+    fitView(width, height, 80)
+  }
+
+  const isDragging = useRef(false)
+
   return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      width="100%" height="100%"
-      style={{ display: 'block' }}
-      aria-label="Mapa de interdependências Orison — Árvore da Vida"
-    >
-      <defs>
-        <radialGradient id="bgGlow" cx="52%" cy="45%" r="38%">
-          <stop offset="0%" stopColor="#8B1A1A" stopOpacity="0.022" />
-          <stop offset="100%" stopColor="#0a0a0a" stopOpacity="0" />
-        </radialGradient>
-      </defs>
+    <div ref={containerRef} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+      <svg
+        ref={svgRef}
+        width="100%" height="100%"
+        style={{ display: 'block', cursor: 'grab' }}
+        onMouseDown={onMouseDown}
+        aria-label="Mapa de interdependências Orison"
+      >
+        <defs>
+          <radialGradient id="bgGlow" cx="52%" cy="45%" r="38%">
+            <stop offset="0%" stopColor="#8B1A1A" stopOpacity="0.02" />
+            <stop offset="100%" stopColor="#0a0a0a" stopOpacity="0" />
+          </radialGradient>
+        </defs>
 
-      <rect width={W} height={H} fill="#111113" />
-      <rect width={W} height={H} fill="url(#bgGlow)" />
+        {/* Fundo fixo — fora do grupo de transform */}
+        <rect width="100%" height="100%" fill="#111113" />
+        <rect width="100%" height="100%" fill="url(#bgGlow)" />
 
-      <PillarLabels />
+        {/* Grupo de zoom/pan — tudo aqui dentro transforma */}
+        <g transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}>
+          <PillarLabels positions={positions} />
 
-      {/* Camada 1 — substrato (mais fundo, muito fraco) */}
-      {substratoEdges.map((e) => <EdgePath key={e.id} edge={e} />)}
+          <EdgeLayer
+            positions={positions}
+            substratoEdges={substratoEdges}
+            normalEdges={normalEdges}
+            loopEdges={loopEdges}
+          />
 
-      {/* Camada 2 — arestas normais */}
-      {normalEdges.map((e) => <EdgePath key={e.id} edge={e} />)}
+          <NodeLayer positions={positions} onMouseDown={onMouseDown} />
 
-      {/* Camada 3 — loops (arcos largos à direita) */}
-      {loopEdges.map((e, i) => <EdgePath key={e.id} edge={e} loopIdx={i} />)}
+          {/* Chips numéricos — z acima dos nós */}
+          <NumChipLayer
+            positions={positions}
+            normalEdges={normalEdges}
+            loopEdges={loopEdges}
+          />
+        </g>
+      </svg>
 
-      {/* Nós */}
-      {nodes.map((n) => <NodeCircle key={n.id} node={n} />)}
-
-      {/* Chips de rótulo — z acima de tudo */}
-      {normalEdges.map((e) => <EdgeChip key={`c-${e.id}`} edge={e} />)}
-      {loopEdges.map((e, i) => <EdgeChip key={`c-${e.id}`} edge={e} loopIdx={i} />)}
-
-      <Legend />
-    </svg>
+      <ZoomControls onZoomIn={zoomIn} onZoomOut={zoomOut} onFit={handleFit} />
+    </div>
   )
 }
