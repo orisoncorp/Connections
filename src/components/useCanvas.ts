@@ -136,9 +136,12 @@ export function useCanvas({ initialTransform, initialPositions, nodeRadius }: Us
     return dragState.current.type === 'node' ? 'grabbing' : 'grabbing'
   }, [])
 
-  // Fit-to-view: calcula transform para enquadrar todos os nós
+  // Fit-to-view: reseta posições para o inicial e enquadra tudo
   const fitView = useCallback((svgW: number, svgH: number, padding = 80) => {
-    const pos = positionsRef.current
+    // Sempre volta às posições originais
+    setPositions(initialPositions)
+    // Calcula transform sobre as posições originais (não as arrastadas)
+    const pos = initialPositions
     const xs = Object.values(pos).map((p) => p.x)
     const ys = Object.values(pos).map((p) => p.y)
     const minX = Math.min(...xs) - padding
@@ -151,7 +154,7 @@ export function useCanvas({ initialTransform, initialPositions, nodeRadius }: Us
     const x = (svgW - contentW * k) / 2 - minX * k
     const y = (svgH - contentH * k) / 2 - minY * k
     setTransform({ x, y, k })
-  }, [])
+  }, [initialPositions])
 
   // Attach wheel listener (passive: false)
   useEffect(() => {

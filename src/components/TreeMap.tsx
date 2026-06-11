@@ -231,7 +231,7 @@ function NodeCircle({ node, positions }: { node: Node; positions: NodePositions 
   const nameColor = node.department === 'projetos' ? '#1a1a1c' : '#edeae4'
   const sephColor = node.department === 'projetos' ? '#555' : '#bcbab5'
 
-  // Da'at — liminar mas presente (22% fill, borda tracejada legível)
+  // Da'at/Elpis — liminar mas presente: círculo tracejado, nome acima, disco vazio
   if (isHidden) {
     return (
       <g style={{ cursor: 'grab' }}>
@@ -239,17 +239,10 @@ function NodeCircle({ node, positions }: { node: Node; positions: NodePositions 
           fill={color} fillOpacity={0.22}
           stroke={color} strokeWidth={1.5}
           strokeDasharray="6,4" strokeOpacity={0.55} />
-        {/* Nome acima */}
         <text x={p.x} y={p.y - NODE_R - 8} textAnchor="middle"
           fill="#e8e6e1" fontSize={10.5}
           fontFamily="Cormorant Garamond, serif" fontWeight={300} opacity={0.65}>
           {node.label}
-        </text>
-        {/* Sephirah dentro */}
-        <text x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle"
-          fill="#e8e6e1" fontSize={6.5} fontFamily="Montserrat, sans-serif"
-          letterSpacing={2} opacity={0.45} style={{ textTransform: 'uppercase' }}>
-          {node.sephirah}
         </text>
       </g>
     )
@@ -312,16 +305,6 @@ function NodeCircle({ node, positions }: { node: Node; positions: NodePositions 
         </text>
       ))}
 
-      {/* Sephirah dentro */}
-      {node.sephirah && (
-        <text x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle"
-          fill={sephColor} fontSize={6.5} fontFamily="Montserrat, sans-serif"
-          fontWeight={400} letterSpacing={2.5}
-          style={{ textTransform: 'uppercase' }}>
-          {node.sephirah}
-        </text>
-      )}
-
       {/* Sub-items abaixo do círculo */}
       {node.subItems && (
         <text x={p.x} y={p.y + NODE_R + 13} textAnchor="middle"
@@ -335,7 +318,6 @@ function NodeCircle({ node, positions }: { node: Node; positions: NodePositions 
 }
 
 function PillarLabels({ positions }: { positions: NodePositions }) {
-  // Âncoras fixas baseadas nas posições canônicas (não se movem com drag individual)
   const cx = positions['keter']?.x ?? 550
   return (
     <g>
@@ -347,17 +329,8 @@ function PillarLabels({ positions }: { positions: NodePositions }) {
         fontFamily="Montserrat, sans-serif" letterSpacing={4} opacity={0.14}>
         MANIFESTAÇÃO
       </text>
-      <text x={positions['binah']?.x ?? 320} y={54} textAnchor="middle"
-        fill="#1A5C2E" fontSize={6.5} fontFamily="Montserrat, sans-serif"
-        letterSpacing={3} opacity={0.4}>SEVERIDADE</text>
-      <text x={cx} y={54} textAnchor="middle"
-        fill="#e8e6e1" fontSize={6.5} fontFamily="Montserrat, sans-serif"
-        letterSpacing={3} opacity={0.25}>EQUILÍBRIO</text>
-      <text x={positions['hokhmah']?.x ?? 780} y={54} textAnchor="middle"
-        fill="#8B4A1A" fontSize={6.5} fontFamily="Montserrat, sans-serif"
-        letterSpacing={3} opacity={0.4}>MISERICÓRDIA</text>
-      {/* Linhas de pilar — fixas nas posições iniciais para não mover com drag */}
-      <line x1={cx} y1={62} x2={cx} y2={920}
+      {/* Linhas de pilar */}
+      <line x1={cx} y1={42} x2={cx} y2={920}
         stroke="#2e2e2e" strokeWidth={1} strokeDasharray="2,7" opacity={0.16} />
       <line x1={positions['binah']?.x ?? 320} y1={165}
             x2={positions['hod']?.x ?? 320}   y2={660}
