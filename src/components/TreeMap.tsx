@@ -231,7 +231,7 @@ function NodeCircle({ node, positions }: { node: Node; positions: NodePositions 
   const nameColor = node.department === 'projetos' ? '#1a1a1c' : '#edeae4'
   const sephColor = node.department === 'projetos' ? '#555' : '#bcbab5'
 
-  // Da'at/Elpis — liminar mas presente: círculo tracejado, nome acima, disco vazio
+  // Da'at/Elpis — liminar: círculo tracejado, nome dentro
   if (isHidden) {
     return (
       <g style={{ cursor: 'grab' }}>
@@ -239,8 +239,8 @@ function NodeCircle({ node, positions }: { node: Node; positions: NodePositions 
           fill={color} fillOpacity={0.22}
           stroke={color} strokeWidth={1.5}
           strokeDasharray="6,4" strokeOpacity={0.55} />
-        <text x={p.x} y={p.y - NODE_R - 8} textAnchor="middle"
-          fill="#e8e6e1" fontSize={10.5}
+        <text x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle"
+          fill="#e8e6e1" fontSize={9.5}
           fontFamily="Cormorant Garamond, serif" fontWeight={300} opacity={0.65}>
           {node.label}
         </text>
@@ -271,21 +271,24 @@ function NodeCircle({ node, positions }: { node: Node; positions: NodePositions 
     )
   }
 
-  // Nome sempre acima: quebrar em linhas de máx 18 chars
+  // Quebra nome em linhas de máx ~14 chars para caber no círculo r=36
   const words = node.label.split(' ')
   const lines: string[] = []
   let cur = ''
   for (const w of words) {
     const cand = cur ? `${cur} ${w}` : w
-    if (cand.length > 18 && cur) { lines.push(cur); cur = w }
+    if (cand.length > 14 && cur) { lines.push(cur); cur = w }
     else cur = cand
   }
   if (cur) lines.push(cur)
 
-  const lineH = 13
+  const lineH = 12
   const blockH = lines.length * lineH
-  // Bloco sempre acima do círculo; gap = 8px
-  const nameBlockTop = p.y - NODE_R - 8 - blockH
+  // Centraliza o bloco de nome verticalmente dentro do círculo
+  // Se há sub-items, sobe o bloco ligeiramente para dar espaço abaixo
+  const hasItems = !!node.subItems
+  const nameOffsetY = hasItems ? -8 : 0
+  const nameBlockTop = p.y - blockH / 2 + nameOffsetY
 
   return (
     <g style={{ cursor: 'grab' }}>
@@ -294,22 +297,23 @@ function NodeCircle({ node, positions }: { node: Node; positions: NodePositions 
         fill={color} fillOpacity={node.department === 'projetos' ? 0.82 : 0.16}
         stroke={color} strokeWidth={1} strokeOpacity={0.62} />
 
-      {/* Nome acima — sempre */}
+      {/* Nome dentro do círculo, centralizado */}
       {lines.map((line, i) => (
         <text key={i}
-          x={p.x} y={nameBlockTop + i * lineH + lineH * 0.85}
+          x={p.x} y={nameBlockTop + i * lineH + lineH * 0.8}
           textAnchor="middle"
-          fill={nameColor} fontSize={10.5}
-          fontFamily="Cormorant Garamond, serif" fontWeight={300} letterSpacing={0.3}>
+          fill={nameColor} fontSize={9.5}
+          fontFamily="Cormorant Garamond, serif" fontWeight={300} letterSpacing={0.2}>
           {line}
         </text>
       ))}
 
-      {/* Sub-items abaixo do círculo */}
+      {/* Sub-items — linha menor dentro do círculo, abaixo do nome */}
       {node.subItems && (
-        <text x={p.x} y={p.y + NODE_R + 13} textAnchor="middle"
-          fill={sephColor} fontSize={6.5} fontFamily="Montserrat, sans-serif"
-          letterSpacing={0.8} opacity={0.72}>
+        <text x={p.x} y={nameBlockTop + blockH + lineH * 0.5}
+          textAnchor="middle"
+          fill={sephColor} fontSize={6} fontFamily="Montserrat, sans-serif"
+          letterSpacing={0.5} opacity={0.65}>
           {node.subItems.join(' · ')}
         </text>
       )}
